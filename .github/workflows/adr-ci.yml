@@ -53,3 +53,13 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           ./adr.ps1 -VerifyIndex
+
+      - name: Verify Git Hooks and Links
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # تست اسکریپت مدیریت ADR با سوئیچ اعتبارسنجی لینک‌ها
+          ./adr.ps1 -VerifyLinks
+          # تست نصب هوک‌ها به صورت نمایشی
+          ./setup-hooks.ps1 -Force
+          git status
