@@ -1,0 +1,21 @@
+#!/bin/sh
+echo "[hook] 🔍 Checking ADR repository integrity..."
+
+pwsh -NoProfile -File ./adr.ps1 -VerifyLinks -Path docs/decisions
+RESULT_LINKS=$?
+
+if [ $RESULT_LINKS -ne 0 ]; then
+    echo "[hook] ❌ Commit rejected: ADR link verification failed."
+    exit 1
+fi
+
+pwsh -NoProfile -File ./adr.ps1 -VerifyIndex -Path docs/decisions
+RESULT_INDEX=$?
+
+if [ $RESULT_INDEX -ne 0 ]; then
+    echo "[hook] ❌ Commit rejected: ADR index verification failed."
+    exit 1
+fi
+
+echo "[hook] ✅ ADR validation passed."
+exit 0

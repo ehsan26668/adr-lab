@@ -1,0 +1,14 @@
+#!/bin/sh
+echo "[hook] 🧪 Running full Pester test suite before push..."
+
+pwsh -NoProfile -Command "exit (Invoke-Pester -Path ./tests -Output Minimal -PassThru).FailedCount"
+RESULT=$?
+
+if [ $RESULT -ne 0 ]; then
+    echo ""
+    echo "[hook] ❌ Push rejected: Pester tests failed. Fix failing tests before pushing."
+    exit 1
+fi
+
+echo "[hook] ✅ All Pester tests passed. Proceeding with push."
+exit 0
