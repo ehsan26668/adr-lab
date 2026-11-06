@@ -7,7 +7,8 @@
 #>
 [CmdletBinding()]
 param(
-    [switch]$Uninstall
+    [switch]$Uninstall,
+    [switch]$Force
 )
 
 Set-StrictMode -Version Latest
