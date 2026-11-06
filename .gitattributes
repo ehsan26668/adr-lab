@@ -1,3 +1,10 @@
+# Set default behavior, in case people don't have core.autocrlf set.
 * text=auto
+
+# Explicitly declare files we want to be normalized and converted
+# to LF on checkout and commit.
 *.ps1 text eol=lf
-*.md  text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf

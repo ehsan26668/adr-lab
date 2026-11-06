@@ -6,11 +6,15 @@ param(
     [Parameter(ParameterSetName = 'New')]
     [string]$Slug,
 
-    [Parameter(ParameterSetName = 'Index')]
+    [Parameter(ParameterSetName = 'GenerateIndex', Mandatory = $true)]
     [switch]$GenerateIndex,
 
+    [Parameter(ParameterSetName = 'VerifyIndex', Mandatory = $true)]
+    [switch]$VerifyIndex,
+
     [Parameter(ParameterSetName = 'New')]
-    [Parameter(ParameterSetName = 'Index')]
+    [Parameter(ParameterSetName = 'GenerateIndex')]
+    [Parameter(ParameterSetName = 'VerifyIndex')]
     [string]$Path = 'docs/decisions'
 )
 
@@ -19,16 +23,24 @@ $ErrorActionPreference = 'Stop'
 $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
 
 function Get-Slug ([string]$text) {
-    if ([string]::IsNullOrWhiteSpace($text)) { return '' }
+    if ([string]::IsNullOrWhiteSpace($text)) {
+        return ''
+    }
+
     $clean = $text.ToLowerInvariant()
     $clean = [regex]::Replace($clean, '[^a-z0-9\s-]', '')
     $clean = [regex]::Replace($clean, '\s+', '-')
     $clean = [regex]::Replace($clean, '-+', '-')
+
     return $clean.Trim('-')
 }
 
-# Validate New inputs before creating a destination directory or ADR file.
-if (-not $GenerateIndex) {
+if ([string]::IsNullOrWhiteSpace($Path)) {
+    throw 'مقدار -Path نمی‌تواند خالی یا فقط شامل فاصله باشد.'
+}
+
+# اعتبارسنجی ورودی‌های ساخت ADR، پیش از ایجاد پوشه یا فایل.
+if ($PSCmdlet.ParameterSetName -eq 'New') {
     if ([string]::IsNullOrWhiteSpace($Title)) {
         throw 'عنوان ADR نمی‌تواند خالی یا فقط شامل فاصله باشد.'
     }
@@ -37,6 +49,7 @@ if (-not $GenerateIndex) {
         if ($Slug -cnotmatch '^[a-z0-9]+(?:-[a-z0-9]+)*$') {
             throw 'مقدار -Slug باید فقط شامل حروف کوچک انگلیسی، رقم و خط تیره بین بخش‌ها باشد.'
         }
+
         $finalSlug = $Slug
     }
     else {
@@ -45,81 +58,146 @@ if (-not $GenerateIndex) {
         }
 
         $finalSlug = Get-Slug $Title
+
         if ([string]::IsNullOrWhiteSpace($finalSlug)) {
             throw 'از عنوان، Slug معتبر ساخته نشد؛ پارامتر -Slug را مشخص کنید.'
         }
     }
 }
 
-$resolvedPath = Resolve-Path -LiteralPath $Path -ErrorAction SilentlyContinue
-if (-not $resolvedPath) {
-    $targetDir = New-Item -ItemType Directory -Path $Path -Force
+# Verify نباید مسیر یا فایل جدیدی ایجاد کند.
+if (Test-Path -LiteralPath $Path) {
+    $targetDir = Get-Item -LiteralPath $Path
+
+    if (-not $targetDir.PSIsContainer) {
+        throw "مسیر مشخص‌شده یک پوشه نیست: $Path"
+    }
+}
+elseif ($PSCmdlet.ParameterSetName -eq 'VerifyIndex') {
+    throw "پوشهٔ ADR برای بررسی وجود ندارد: $Path"
 }
 else {
-    $targetDir = Get-Item -LiteralPath $resolvedPath.Path
+    $targetDir = New-Item -ItemType Directory -Path $Path -Force
 }
 
-if ($GenerateIndex) {
-    $adrFiles = Get-ChildItem -LiteralPath $targetDir.FullName -Filter '*.md' |
+if (
+    $PSCmdlet.ParameterSetName -eq 'GenerateIndex' -or
+    $PSCmdlet.ParameterSetName -eq 'VerifyIndex'
+) {
+    $adrFiles = Get-ChildItem -LiteralPath $targetDir.FullName -Filter '*.md' -File |
         Where-Object { $_.Name -match '^\d{4}-.+\.md$' } |
         Sort-Object Name
 
-    $sb = [System.Text.StringBuilder]::new()
-    [void]$sb.AppendLine('# Architecture Decision Records')
-    [void]$sb.AppendLine()
-    [void]$sb.AppendLine('| ID | Title | Status | Last Updated |')
-    [void]$sb.AppendLine('|---|---|---|---|')
+    $indexLines = [System.Collections.Generic.List[string]]::new()
+    $indexLines.Add('# Architecture Decision Records')
+    $indexLines.Add('')
+    $indexLines.Add('| ID | Title | Status | Date |')
+    $indexLines.Add('|---|---|---|---|')
 
     foreach ($file in $adrFiles) {
-        $lines = Get-Content -LiteralPath $file.FullName -Encoding utf8
-        $idStr = $file.Name.Substring(0, 4)
+        $content = [System.IO.File]::ReadAllText($file.FullName, $utf8NoBom)
+        $id = $file.Name.Substring(0, 4)
 
-        $titleLine = $lines |
-            Where-Object { $_ -match '^#\s+ADR-\d{4}:\s*(.+)$' } |
-            Select-Object -First 1
-        $extractedTitle = if ($titleLine) {
-            $Matches[1].Trim()
+        $titleMatch = [regex]::Match(
+            $content,
+            '(?m)^#\s+ADR-\d{4}:\s*(.+?)\s*$'
+        )
+
+        if ($titleMatch.Success) {
+            $adrTitle = $titleMatch.Groups[1].Value.Trim()
         }
         else {
-            'Untitled'
+            $adrTitle = 'Untitled'
         }
 
-        $statusLine = $lines |
-            Where-Object { $_ -match '^\*\*Status\*\*:\s*`?([^`\s]+)`?' } |
-            Select-Object -First 1
-        $extractedStatus = if ($statusLine) {
-            $Matches[1].Trim()
+        # جلوگیری از خراب‌شدن ساختار جدول Markdown.
+        $adrTitle = $adrTitle -replace '\|', '\|'
+
+        $statusMatch = [regex]::Match(
+            $content,
+            '(?m)^\*\*Status\*\*:\s*(.*?)\s*$'
+        )
+
+        if ($statusMatch.Success) {
+            $status = $statusMatch.Groups[1].Value.Trim().Trim([char]96)
         }
         else {
-            'Unknown'
+            $status = 'Unknown'
         }
 
-        $relPath = $file.Name
-        [void]$sb.AppendLine((
-            '| {0} | [{1}]({2}) | {3} | {4} |' -f
-            $idStr, $extractedTitle, $relPath, $extractedStatus,
-            $file.LastWriteTime.ToString('yyyy-MM-dd')
-        ))
+        $status = $status -replace '\|', '\|'
+
+        $dateMatch = [regex]::Match(
+            $content,
+            '(?m)^\*\*Date\*\*:\s*(\d{4}-\d{2}-\d{2})\s*$'
+        )
+
+        if ($dateMatch.Success) {
+            $adrDate = $dateMatch.Groups[1].Value
+        }
+        else {
+            $adrDate = 'Unknown'
+        }
+
+        $indexLines.Add(
+            ('| {0} | [{1}]({2}) | {3} | {4} |' -f
+                $id, $adrTitle, $file.Name, $status, $adrDate)
+        )
     }
 
+    # استفاده از LF مستقل از سیستم‌عامل میزبان.
+    $indexContent = [string]::Join("`n", $indexLines.ToArray()) + "`n"
     $indexPath = Join-Path $targetDir.FullName 'readme.md'
-    [System.IO.File]::WriteAllText($indexPath, $sb.ToString(), $utf8NoBom)
+
+    if ($PSCmdlet.ParameterSetName -eq 'VerifyIndex') {
+        if (-not (Test-Path -LiteralPath $indexPath -PathType Leaf)) {
+            throw 'فایل فهرست (readme.md) وجود ندارد. ابتدا دستور -GenerateIndex را اجرا کنید.'
+        }
+
+        $existingIndexContent = [System.IO.File]::ReadAllText(
+            $indexPath,
+            $utf8NoBom
+        )
+
+        # تفاوت CRLF و LF نباید باعث شکست مقایسه شود.
+        $normalizedExpected = $indexContent -replace "`r`n?", "`n"
+        $normalizedExisting = $existingIndexContent -replace "`r`n?", "`n"
+
+        if ($normalizedExpected -cne $normalizedExisting) {
+            throw 'فهرست ADRها با فایل‌های موجود همگام نیست. دستور .\adr.ps1 -GenerateIndex را اجرا و تغییرات را ثبت کنید.'
+        }
+
+        Write-Host 'Index verification passed: readme.md is up-to-date.' -ForegroundColor Green
+        return
+    }
+
+    [System.IO.File]::WriteAllText(
+        $indexPath,
+        $indexContent,
+        $utf8NoBom
+    )
+
     Write-Host "Index generated at: $indexPath" -ForegroundColor Green
     return
 }
 
-$existing = Get-ChildItem -LiteralPath $targetDir.FullName -Filter '*.md' |
+$existing = Get-ChildItem -LiteralPath $targetDir.FullName -Filter '*.md' -File |
     Where-Object { $_.Name -match '^\d{4}-.+\.md$' }
 
 $maxId = 0
-foreach ($f in $existing) {
-    if ($f.Name -match '^(\d{4})-') {
-        $num = [int]$Matches[1]
-        if ($num -gt $maxId) { $maxId = $num }
+
+foreach ($file in $existing) {
+    if ($file.Name -match '^(\d{4})-') {
+        $number = [int]$Matches[1]
+
+        if ($number -gt $maxId) {
+            $maxId = $number
+        }
     }
 }
 
 $nextId = $maxId + 1
+
 if ($nextId -gt 9999) {
     throw 'ظرفیت شناسه‌های چهاررقمی ADR به پایان رسیده است (حداکثر 9999).'
 }
@@ -161,5 +239,10 @@ Chosen option: "[گزینه انتخاب شده]", because [علت اصلی ان
 - [لینک به مدارک یا مستندات مرتبط]
 "@
 
-[System.IO.File]::WriteAllText($filePath, $template, $utf8NoBom)
+[System.IO.File]::WriteAllText(
+    $filePath,
+    $template,
+    $utf8NoBom
+)
+
 Write-Host "ADR successfully created: $filePath" -ForegroundColor Green
