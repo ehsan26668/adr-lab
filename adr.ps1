@@ -16,6 +16,7 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+$utf8NoBom = [System.Text.UTF8Encoding]::new($false)
 
 function Get-Slug ([string]$text) {
     if ([string]::IsNullOrWhiteSpace($text)) { return '' }
@@ -26,15 +27,40 @@ function Get-Slug ([string]$text) {
     return $clean.Trim('-')
 }
 
+# Validate New inputs before creating a destination directory or ADR file.
+if (-not $GenerateIndex) {
+    if ([string]::IsNullOrWhiteSpace($Title)) {
+        throw 'عنوان ADR نمی‌تواند خالی یا فقط شامل فاصله باشد.'
+    }
+
+    if ($PSBoundParameters.ContainsKey('Slug')) {
+        if ($Slug -cnotmatch '^[a-z0-9]+(?:-[a-z0-9]+)*$') {
+            throw 'مقدار -Slug باید فقط شامل حروف کوچک انگلیسی، رقم و خط تیره بین بخش‌ها باشد.'
+        }
+        $finalSlug = $Slug
+    }
+    else {
+        if ($Title -match '[^\x00-\x7F]') {
+            throw 'برای عنوان دارای نویسهٔ غیراَسکی، وارد کردن -Slug الزامی است.'
+        }
+
+        $finalSlug = Get-Slug $Title
+        if ([string]::IsNullOrWhiteSpace($finalSlug)) {
+            throw 'از عنوان، Slug معتبر ساخته نشد؛ پارامتر -Slug را مشخص کنید.'
+        }
+    }
+}
+
 $resolvedPath = Resolve-Path -LiteralPath $Path -ErrorAction SilentlyContinue
 if (-not $resolvedPath) {
     $targetDir = New-Item -ItemType Directory -Path $Path -Force
-} else {
+}
+else {
     $targetDir = Get-Item -LiteralPath $resolvedPath.Path
 }
 
 if ($GenerateIndex) {
-    $adrFiles = Get-ChildItem -Path $targetDir.FullName -Filter '*.md' |
+    $adrFiles = Get-ChildItem -LiteralPath $targetDir.FullName -Filter '*.md' |
         Where-Object { $_.Name -match '^\d{4}-.+\.md$' } |
         Sort-Object Name
 
@@ -48,30 +74,41 @@ if ($GenerateIndex) {
         $lines = Get-Content -LiteralPath $file.FullName -Encoding utf8
         $idStr = $file.Name.Substring(0, 4)
 
-        $titleLine = $lines | Where-Object { $_ -match '^#\s+ADR-\d{4}:\s*(.+)$' } | Select-Object -First 1
-        $extractedTitle = if ($titleLine) { $Matches[1].Trim() } else { 'Untitled' }
+        $titleLine = $lines |
+            Where-Object { $_ -match '^#\s+ADR-\d{4}:\s*(.+)$' } |
+            Select-Object -First 1
+        $extractedTitle = if ($titleLine) {
+            $Matches[1].Trim()
+        }
+        else {
+            'Untitled'
+        }
 
-        $statusLine = $lines | Where-Object { $_ -match '^\*\*Status\*\*:\s*`?([^`\s]+)`?' } | Select-Object -First 1
-        $extractedStatus = if ($statusLine) { $Matches[1].Trim() } else { 'Unknown' }
+        $statusLine = $lines |
+            Where-Object { $_ -match '^\*\*Status\*\*:\s*`?([^`\s]+)`?' } |
+            Select-Object -First 1
+        $extractedStatus = if ($statusLine) {
+            $Matches[1].Trim()
+        }
+        else {
+            'Unknown'
+        }
 
         $relPath = $file.Name
-        [void]$sb.AppendLine(("| {0} | [{1}]({2}) | {3} | {4} |" -f $idStr, $extractedTitle, $relPath, $extractedStatus, $file.LastWriteTime.ToString('yyyy-MM-dd')))
+        [void]$sb.AppendLine((
+            '| {0} | [{1}]({2}) | {3} | {4} |' -f
+            $idStr, $extractedTitle, $relPath, $extractedStatus,
+            $file.LastWriteTime.ToString('yyyy-MM-dd')
+        ))
     }
 
     $indexPath = Join-Path $targetDir.FullName 'readme.md'
-    [System.IO.File]::WriteAllText($indexPath, $sb.ToString(), [System.Text.Encoding]::UTF8)
+    [System.IO.File]::WriteAllText($indexPath, $sb.ToString(), $utf8NoBom)
     Write-Host "Index generated at: $indexPath" -ForegroundColor Green
     return
 }
 
-# ParameterSet: New validation and creation
-$finalSlug = if (-not [string]::IsNullOrWhiteSpace($Slug)) { Get-Slug $Slug } else { Get-Slug $Title }
-
-if ([string]::IsNullOrWhiteSpace($finalSlug)) {
-    throw "عنوان شامل کاراکترهای انگلیسی معتبر نیست. لطفاً پارامتر -Slug را به زبان انگلیسی وارد کنید."
-}
-
-$existing = Get-ChildItem -Path $targetDir.FullName -Filter '*.md' |
+$existing = Get-ChildItem -LiteralPath $targetDir.FullName -Filter '*.md' |
     Where-Object { $_.Name -match '^\d{4}-.+\.md$' }
 
 $maxId = 0
@@ -83,7 +120,11 @@ foreach ($f in $existing) {
 }
 
 $nextId = $maxId + 1
-$formattedId = "{0:D4}" -f $nextId
+if ($nextId -gt 9999) {
+    throw 'ظرفیت شناسه‌های چهاررقمی ADR به پایان رسیده است (حداکثر 9999).'
+}
+
+$formattedId = '{0:D4}' -f $nextId
 $fileName = "${formattedId}-${finalSlug}.md"
 $filePath = Join-Path $targetDir.FullName $fileName
 
@@ -120,5 +161,5 @@ Chosen option: "[گزینه انتخاب شده]", because [علت اصلی ان
 - [لینک به مدارک یا مستندات مرتبط]
 "@
 
-[System.IO.File]::WriteAllText($filePath, $template, [System.Text.Encoding]::UTF8)
+[System.IO.File]::WriteAllText($filePath, $template, $utf8NoBom)
 Write-Host "ADR successfully created: $filePath" -ForegroundColor Green
