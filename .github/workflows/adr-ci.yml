@@ -35,7 +35,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          Install-Module Pester -RequiredVersion '5.5.0' -Scope CurrentUser -Force -AllowClobber
+          Install-Module Pester -RequiredVersion '5.5.0' -Scope CurrentUser -Force -SkipPublisherCheck
           Import-Module Pester -RequiredVersion '5.5.0' -ErrorAction Stop
 
       - name: Run Pester tests
